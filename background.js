@@ -3,21 +3,19 @@ console.log("Background script loaded/reloaded at:", new Date().toLocaleString()
 
 const CSV_HEADER = "Timestamp,TabCount\n";
 let csvData = CSV_HEADER; // Will be initialized from storage on startup
+let loggingIntervalId = null; // Store the ID for the setInterval
 
-// Flag to track if the alarm listener is already set up
-let isAlarmListenerSetUp = false;
-
-// Function to convert interval to minutes
-function intervalToMinutes(value, unit) {
+// Function to convert interval to milliseconds
+function intervalToMilliseconds(value, unit) {
   switch (unit) {
     case 'minutes':
-      return Math.max(1, value); // Enforce minimum 1 minute
+      return Math.max(1, value) * 60 * 1000; // Minimum 1 minute (60,000 ms)
     case 'hours':
-      return value * 60;
+      return value * 60 * 60 * 1000;
     case 'days':
-      return value * 60 * 24;
+      return value * 24 * 60 * 60 * 1000;
     default:
-      return 5;
+      return 5 * 60 * 1000; // Default to 5 minutes
   }
 }
 
@@ -34,20 +32,6 @@ async function updateLastTabCountForDisplay() {
 
 async function periodicLogTabCountAndAppendToCsv() {
   try {
-    // Add a very small artificial delay and a timestamp check
-    // to prevent near-simultaneous calls from logging duplicates.
-    // This is a last resort debounce if multiple listeners are firing.
-    const now = Date.now();
-    const lastLogTimestamp = (await browser.storage.local.get('lastCsvLogTime')).lastCsvLogTime || 0;
-    
-    // If less than 100ms since last CSV log entry, skip.
-    // This is a safety net against very rapid duplicate calls.
-    if (now - lastLogTimestamp < 100) {
-        console.warn("Skipping very rapid duplicate CSV log entry.");
-        return;
-    }
-    await browser.storage.local.set({ lastCsvLogTime: now }); // Record this log's time
-
     const allTabs = await browser.tabs.query({});
     const tabCount = allTabs.length;
     const timestamp = new Date().toLocaleString();
@@ -55,6 +39,7 @@ async function periodicLogTabCountAndAppendToCsv() {
     csvData += `"${timestamp}",${tabCount}\n`;
     console.log(`Periodically logged tab count: ${tabCount} at ${timestamp}`);
 
+    // *** IMPORTANT: Persist csvData immediately after adding a new entry ***
     await browser.storage.local.set({ accumulatedCsvData: csvData });
 
   } catch (error) {
@@ -78,81 +63,73 @@ async function downloadCsvFile() {
       saveAs: true
     });
     console.log(`CSV file "${filename}" downloaded.`);
+    // Reset csvData in memory and storage ONLY AFTER successful download on user request
     csvData = CSV_HEADER;
     await browser.storage.local.set({ accumulatedCsvData: CSV_HEADER });
-    await browser.storage.local.remove('lastCsvLogTime'); // Clear debounce timer
+    await browser.storage.local.remove('lastCsvLogTime'); // Clean up old debounce timer (if any)
   } catch (error) {
     console.error("Error downloading CSV file:", error);
   }
 }
 
-// --- Alarm and Logging Logic ---
+// --- Logging Control Logic ---
 
-// The dedicated alarm listener function
-async function handleAlarm(alarm) {
-  if (alarm.name === "logTabCountAlarm") {
-    console.log("Alarm 'logTabCountAlarm' fired."); // Debug: See when alarm fires
-    await periodicLogTabCountAndAppendToCsv();
-  }
-}
-
-// Function to set up the alarm listener ONCE
-function setUpAlarmListener() {
-    if (!isAlarmListenerSetUp) {
-        browser.alarms.onAlarm.addListener(handleAlarm);
-        isAlarmListenerSetUp = true;
-        console.log("Alarm listener set up.");
-    } else {
-        console.log("Alarm listener already set up, skipping.");
-    }
-}
-
-// Function to start the periodic logging
 async function startPeriodicLogging() {
+  // Clear any existing interval to prevent duplicates
+  if (loggingIntervalId !== null) {
+    clearInterval(loggingIntervalId);
+    console.log("Cleared existing logging interval before starting new one.");
+  }
+
   const prefs = await browser.storage.local.get(['loggingIntervalValue', 'loggingIntervalUnit']);
-  const intervalValue = prefs.loggingIntervalValue || 5;
+  const intervalValue = prefs.loggingIntervalValue || 1; // Default to 1 min
   const intervalUnit = prefs.loggingIntervalUnit || 'minutes';
 
-  const periodInMinutes = intervalToMinutes(intervalValue, intervalUnit);
-
-  // Clear any previously scheduled alarm to prevent duplicates if start is clicked repeatedly
-  browser.alarms.clear("logTabCountAlarm");
-  console.log("Cleared existing alarms.");
-
-  // Create the new alarm: First alarm fires AFTER periodInMinutes.
-  browser.alarms.create("logTabCountAlarm", {
-    periodInMinutes: periodInMinutes
-  });
-  console.log(`Created alarm: logTabCountAlarm, period: ${periodInMinutes} min.`);
-
-  // Debug: List all active alarms
-  const allAlarms = await browser.alarms.getAll();
-  console.log("Active alarms after creation:", allAlarms);
-
+  const periodInMilliseconds = intervalToMilliseconds(intervalValue, intervalUnit);
 
   await browser.storage.local.set({ isLoggingActive: true });
-  console.log(`Periodic logging started. Interval: ${periodInMinutes} minutes.`);
+  console.log(`Periodic logging started. Interval: ${periodInMilliseconds / 1000 / 60} minutes.`);
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: true });
 
-  // Manual immediate log upon starting, separate from alarm schedule
+  // Perform an immediate log when starting
   await periodicLogTabCountAndAppendToCsv();
+
+  // Set the interval for subsequent logs
+  loggingIntervalId = setInterval(async () => {
+    // Check if logging is still active in storage before logging again
+    // This handles cases where the script might reload but logging was stopped,
+    // preventing the interval from continuing indefinitely if not explicitly cleared.
+    const currentPrefs = await browser.storage.local.get('isLoggingActive');
+    if (currentPrefs.isLoggingActive) {
+        await periodicLogTabCountAndAppendToCsv();
+    } else {
+        // If it's somehow inactive, clear the interval
+        clearInterval(loggingIntervalId);
+        loggingIntervalId = null;
+        console.log("Interval cleared because logging became inactive in storage.");
+    }
+  }, periodInMilliseconds);
+
+  console.log(`Interval ID created: ${loggingIntervalId}`);
 }
 
-// Function to stop the periodic logging
 async function stopPeriodicLogging() {
-  browser.alarms.clear("logTabCountAlarm");
-  console.log("Cleared alarms on stop.");
+  if (loggingIntervalId !== null) {
+    clearInterval(loggingIntervalId);
+    loggingIntervalId = null;
+    console.log("Cleared logging interval on explicit stop.");
+  }
   await browser.storage.local.set({ isLoggingActive: false });
   console.log("Periodic logging stopped.");
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: false });
+  
+  // *** ONLY DOWNLOAD CSV HERE ON USER'S REQUEST ***
   await downloadCsvFile();
 }
 
 // Initial setup when background script starts
 (async () => {
   console.log("Starting initial setup for background script.");
-  // Ensure the alarm listener is set up once and only once.
-  setUpAlarmListener(); // Call this immediately on script load.
 
   // 1. Load accumulated CSV data from storage (if any)
   const storedCsv = await browser.storage.local.get('accumulatedCsvData');
@@ -165,10 +142,10 @@ async function stopPeriodicLogging() {
   // 3. Check for logging status and restart periodic logging if it was active
   const prefs = await browser.storage.local.get('isLoggingActive');
   if (prefs.isLoggingActive) {
-    console.log("Logging was active, attempting to restart periodic logging.");
+    console.log("Logging was active on startup, attempting to restart periodic logging.");
     startPeriodicLogging();
   } else {
-    console.log("Logging was inactive.");
+    console.log("Logging was inactive on startup.");
   }
 })();
 
@@ -192,6 +169,14 @@ browser.tabs.onDetached.addListener(() => {
 browser.tabs.onReplaced.addListener(() => {
   setTimeout(updateLastTabCountForDisplay, 150);
 });
+
+// *** REMOVED: browser.runtime.onSuspend.addListener (to stop automatic downloads) ***
+/*
+browser.runtime.onSuspend.addListener(async () => {
+    console.log("Extension is suspending. No automatic download on suspend.");
+    // Data is already persisted to storage.local by periodicLogTabCountAndAppendToCsv().
+});
+*/
 
 // --- Message Listener from Options Page ---
 browser.runtime.onMessage.addListener((message) => {
