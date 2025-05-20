@@ -5,8 +5,8 @@ let csvData = CSV_HEADER; // Will be initialized from storage on startup
 function intervalToMinutes(value, unit) {
   switch (unit) {
     case 'minutes':
-      // Firefox alarms min period is 1 minute, even if delay is less.
-      // So, if value is < 1, enforce 1.
+      // Firefox alarms min period is 1 minute, even if value is < 1.
+      // So, enforce at least 1 minute for alarms.
       return Math.max(1, value);
     case 'hours':
       return value * 60;
@@ -23,7 +23,7 @@ async function updateLastTabCountForDisplay() {
     const allTabs = await browser.tabs.query({});
     const tabCount = allTabs.length;
     await browser.storage.local.set({ lastTabCount: tabCount, timestamp: Date.now() });
-    // console.log(`Last Tab Count for display updated: ${tabCount}`); // Keep for dev, remove for production
+    // console.log(`Last Tab Count for display updated: ${tabCount}`); // Uncomment for dev, remove for production
   } catch (error) {
     console.error("Error updating last tab count for display:", error);
   }
@@ -90,18 +90,20 @@ async function startPeriodicLogging() {
 
   const periodInMinutes = intervalToMinutes(intervalValue, intervalUnit);
 
-  browser.alarms.clear("logTabCountAlarm"); // Clear any existing alarm
+  // Always clear existing alarms before creating a new one
+  browser.alarms.clear("logTabCountAlarm");
 
-  // Create alarm: First alarm fires AFTER one full period, then every period.
-  // This ensures exactly one entry per interval.
+  // Create alarm: The first alarm fires AFTER periodInMinutes, then every periodInMinutes thereafter.
   browser.alarms.create("logTabCountAlarm", {
     periodInMinutes: periodInMinutes
   });
+
   await browser.storage.local.set({ isLoggingActive: true });
   console.log(`Periodic logging started. Interval: ${periodInMinutes} minutes.`);
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: true });
-  // Add an initial log entry immediately upon starting if desired
-  await periodicLogTabCountAndAppendToCsv(); // Manual initial log for immediate feedback
+
+  // Add an initial log entry immediately upon starting (manual trigger, not part of alarm schedule)
+  await periodicLogTabCountAndAppendToCsv();
 }
 
 // Function to stop the periodic logging
@@ -127,9 +129,8 @@ async function stopPeriodicLogging() {
   // 3. Check for logging status and restart periodic logging if it was active
   const prefs = await browser.storage.local.get('isLoggingActive');
   if (prefs.isLoggingActive) {
-    // If logging was active, restart the alarm.
-    // This will cause the first log entry after restart to occur after `periodInMinutes`
-    // unless you want an immediate log on browser restart too.
+    // If logging was active, restart the alarm with the last saved interval.
+    // This will cause the first log entry after restart to occur after `periodInMinutes`.
     startPeriodicLogging();
   }
 })();
