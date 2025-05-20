@@ -5,7 +5,9 @@
   "description": "Logs the number of open tabs.",
   "permissions": [
     "tabs",
-    "storage"
+    "storage",
+    "alarms",
+    "downloads"
   ],
   "background": {
     "scripts": ["background.js"]
