@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Count Logger",
+  "version": "1.0",
+  "description": "Logs the number of open tabs.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "options_page":"options.html"
+}
