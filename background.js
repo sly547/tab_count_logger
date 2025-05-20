@@ -1,5 +1,5 @@
 const CSV_HEADER = "Timestamp,TabCount\n";
-let csvData = CSV_HEADER; // Initialize CSV data with header
+let csvData = CSV_HEADER; // Will be initialized from storage on startup
 
 // Function to convert interval to minutes
 function intervalToMinutes(value, unit) {
@@ -15,23 +15,34 @@ function intervalToMinutes(value, unit) {
   }
 }
 
-// Function to log the current tab count and append to CSV
-async function logTabCountAndAppendToCsv() {
+// Function to update the "Last Tab Count" for the options page
+async function updateLastTabCountForDisplay() {
+  try {
+    const allTabs = await browser.tabs.query({});
+    const tabCount = allTabs.length;
+    await browser.storage.local.set({ lastTabCount: tabCount, timestamp: Date.now() });
+    console.log(`Last Tab Count for display updated: ${tabCount}`);
+  } catch (error) {
+    console.error("Error updating last tab count for display:", error);
+  }
+}
+
+// Function to log the current tab count periodically and append to CSV
+async function periodicLogTabCountAndAppendToCsv() {
   try {
     const allTabs = await browser.tabs.query({});
     const tabCount = allTabs.length;
     const timestamp = new Date().toLocaleString();
 
-    console.log(`Current tab count: ${tabCount} at ${timestamp}`); // Keep this main log
-
-    // Store the latest count for options page
-    await browser.storage.local.set({ lastTabCount: tabCount, timestamp: Date.now() });
-
     // Append to CSV data
     csvData += `"${timestamp}",${tabCount}\n`;
+    console.log(`Periodically logged tab count: ${tabCount} at ${timestamp}`);
+
+    // Save current accumulated CSV data to storage for persistence
+    await browser.storage.local.set({ accumulatedCsvData: csvData });
 
   } catch (error) {
-    console.error("Error querying tabs or storing data:", error);
+    console.error("Error during periodic CSV logging:", error);
   }
 }
 
@@ -52,8 +63,9 @@ async function downloadCsvFile() {
       saveAs: true // Prompt user for download location
     });
     console.log(`CSV file "${filename}" downloaded.`);
-    // Reset csvData after successful download to start a new log
+    // Reset csvData in memory and storage after successful download
     csvData = CSV_HEADER;
+    await browser.storage.local.set({ accumulatedCsvData: CSV_HEADER }); // Reset storage as well
   } catch (error) {
     console.error("Error downloading CSV file:", error);
   }
@@ -64,7 +76,7 @@ async function downloadCsvFile() {
 // Listener for alarms
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "logTabCountAlarm") {
-    await logTabCountAndAppendToCsv();
+    await periodicLogTabCountAndAppendToCsv();
   }
 });
 
@@ -84,8 +96,8 @@ async function startPeriodicLogging() {
   await browser.storage.local.set({ isLoggingActive: true });
   console.log(`Periodic logging started. Interval: ${periodInMinutes} minutes.`);
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: true });
-  // Perform an immediate log when starting
-  await logTabCountAndAppendToCsv();
+  // Perform an immediate periodic log when starting, and save it
+  await periodicLogTabCountAndAppendToCsv();
 }
 
 // Function to stop the periodic logging
@@ -98,36 +110,42 @@ async function stopPeriodicLogging() {
   await downloadCsvFile();
 }
 
-// Initial check for logging status on browser start
+// Initial setup when background script starts
 (async () => {
+  // 1. Load accumulated CSV data from storage (if any)
+  const storedCsv = await browser.storage.local.get('accumulatedCsvData');
+  csvData = storedCsv.accumulatedCsvData || CSV_HEADER;
+  console.log("Loaded accumulated CSV data:", csvData);
+
+  // 2. Update the "Last Tab Count" for the options page on startup
+  await updateLastTabCountForDisplay();
+
+  // 3. Check for logging status and restart periodic logging if it was active
   const prefs = await browser.storage.local.get('isLoggingActive');
   if (prefs.isLoggingActive) {
     startPeriodicLogging();
   }
-  // Initial log on browser start (for non-periodic tracking)
-  logTabCountAndAppendToCsv();
 })();
 
-// --- Event Listeners for Tab Changes ---
-// These will still trigger logTabCountAndAppendToCsv to update the last logged count and CSV data
-browser.tabs.onCreated.addListener((tab) => {
-  logTabCountAndAppendToCsv(tab);
+// --- Event Listeners for Tab Changes (only update last tab count for display) ---
+browser.tabs.onCreated.addListener(() => {
+  updateLastTabCountForDisplay();
 });
 
-browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
-  setTimeout(logTabCountAndAppendToCsv, 100, { tabId, removeInfo });
+browser.tabs.onRemoved.addListener(() => {
+  setTimeout(updateLastTabCountForDisplay, 100);
 });
 
-browser.tabs.onAttached.addListener((tabId, attachInfo) => {
-  logTabCountAndAppendToCsv({ tabId, attachInfo });
+browser.tabs.onAttached.addListener(() => {
+  updateLastTabCountForDisplay();
 });
 
-browser.tabs.onDetached.addListener((tabId, detachInfo) => {
-  logTabCountAndAppendToCsv({ tabId, detachInfo });
+browser.tabs.onDetached.addListener(() => {
+  updateLastTabCountForDisplay();
 });
 
-browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
-  setTimeout(logTabCountAndAppendToCsv, 150, { addedTabId, removedTabId });
+browser.tabs.onReplaced.addListener(() => {
+  setTimeout(updateLastTabCountForDisplay, 150);
 });
 
 // --- Message Listener from Options Page ---
