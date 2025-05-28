@@ -1,8 +1,6 @@
 // TOP OF background.js
 console.log("Background script loaded/reloaded at:", new Date().toLocaleString());
 
-const CSV_HEADER = "Timestamp,TabCount\n";
-let csvData = CSV_HEADER; // Will be initialized from storage on startup
 let loggingIntervalId = null; // Store the ID for the setInterval
 
 // Function to convert interval to milliseconds
@@ -19,6 +17,7 @@ function intervalToMilliseconds(value, unit) {
   }
 }
 
+// Function to update the "Last Tab Count" for the options page display
 async function updateLastTabCountForDisplay() {
   try {
     const allTabs = await browser.tabs.query({});
@@ -30,45 +29,43 @@ async function updateLastTabCountForDisplay() {
   }
 }
 
-async function periodicLogTabCountAndAppendToCsv() {
+// Function to send the current tab count to the configured HTTP server
+async function sendTabCountToServer() {
   try {
+    const serverUrl = (await browser.storage.local.get('serverUrl')).serverUrl;
+    if (!serverUrl) {
+      console.error("Server URL not configured in extension options. Cannot send tab count.");
+      return;
+    }
+
     const allTabs = await browser.tabs.query({});
     const tabCount = allTabs.length;
-    const timestamp = new Date().toLocaleString();
+    const timestamp = new Date().toISOString(); // ISO string is standard for server-side parsing
 
-    csvData += `"${timestamp}",${tabCount}\n`;
-    console.log(`Periodically logged tab count: ${tabCount} at ${timestamp}`);
+    const payload = {
+      timestamp: timestamp,
+      tabCount: tabCount
+    };
 
-    // *** IMPORTANT: Persist csvData immediately after adding a new entry ***
-    await browser.storage.local.set({ accumulatedCsvData: csvData });
+    console.log(`Sending tab count to server: ${JSON.stringify(payload)} to ${serverUrl}`);
 
-  } catch (error) {
-    console.error("Error during periodic CSV logging:", error);
-  }
-}
-
-async function downloadCsvFile() {
-  if (csvData === CSV_HEADER) {
-    console.log("No new data to download.");
-    return;
-  }
-
-  const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
-  const filename = `tab_count_log_${Date.now()}.csv`;
-
-  try {
-    await browser.downloads.download({
-      url: URL.createObjectURL(blob),
-      filename: filename,
-      saveAs: true
+    const response = await fetch(serverUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload)
     });
-    console.log(`CSV file "${filename}" downloaded.`);
-    // Reset csvData in memory and storage ONLY AFTER successful download on user request
-    csvData = CSV_HEADER;
-    await browser.storage.local.set({ accumulatedCsvData: CSV_HEADER });
-    await browser.storage.local.remove('lastCsvLogTime'); // Clean up old debounce timer (if any)
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Server responded with status ${response.status}: ${errorText}`);
+    }
+
+    console.log('Tab count sent successfully to server.');
+
   } catch (error) {
-    console.error("Error downloading CSV file:", error);
+    console.error("Failed to send tab count to server:", error);
   }
 }
 
@@ -92,16 +89,14 @@ async function startPeriodicLogging() {
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: true });
 
   // Perform an immediate log when starting
-  await periodicLogTabCountAndAppendToCsv();
+  await sendTabCountToServer();
 
   // Set the interval for subsequent logs
   loggingIntervalId = setInterval(async () => {
-    // Check if logging is still active in storage before logging again
-    // This handles cases where the script might reload but logging was stopped,
-    // preventing the interval from continuing indefinitely if not explicitly cleared.
+    // Check if logging is still active in storage before sending again
     const currentPrefs = await browser.storage.local.get('isLoggingActive');
     if (currentPrefs.isLoggingActive) {
-        await periodicLogTabCountAndAppendToCsv();
+        await sendTabCountToServer();
     } else {
         // If it's somehow inactive, clear the interval
         clearInterval(loggingIntervalId);
@@ -122,24 +117,17 @@ async function stopPeriodicLogging() {
   await browser.storage.local.set({ isLoggingActive: false });
   console.log("Periodic logging stopped.");
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: false });
-  
-  // *** ONLY DOWNLOAD CSV HERE ON USER'S REQUEST ***
-  await downloadCsvFile();
+  // No CSV download here anymore
 }
 
 // Initial setup when background script starts
 (async () => {
   console.log("Starting initial setup for background script.");
 
-  // 1. Load accumulated CSV data from storage (if any)
-  const storedCsv = await browser.storage.local.get('accumulatedCsvData');
-  csvData = storedCsv.accumulatedCsvData || CSV_HEADER;
-  console.log("Loaded accumulated CSV data (first 100 chars):", csvData.substring(0, 100));
-
-  // 2. Update the "Last Tab Count" for the options page on startup
+  // Update the "Last Tab Count" for the options page on startup
   await updateLastTabCountForDisplay();
 
-  // 3. Check for logging status and restart periodic logging if it was active
+  // Check for logging status and restart periodic logging if it was active
   const prefs = await browser.storage.local.get('isLoggingActive');
   if (prefs.isLoggingActive) {
     console.log("Logging was active on startup, attempting to restart periodic logging.");
@@ -150,6 +138,7 @@ async function stopPeriodicLogging() {
 })();
 
 // --- Event Listeners for Tab Changes (only update last tab count for display) ---
+// These are not directly tied to sending data to the server.
 browser.tabs.onCreated.addListener(() => {
   updateLastTabCountForDisplay();
 });
@@ -170,14 +159,6 @@ browser.tabs.onReplaced.addListener(() => {
   setTimeout(updateLastTabCountForDisplay, 150);
 });
 
-// *** REMOVED: browser.runtime.onSuspend.addListener (to stop automatic downloads) ***
-/*
-browser.runtime.onSuspend.addListener(async () => {
-    console.log("Extension is suspending. No automatic download on suspend.");
-    // Data is already persisted to storage.local by periodicLogTabCountAndAppendToCsv().
-});
-*/
-
 // --- Message Listener from Options Page ---
 browser.runtime.onMessage.addListener((message) => {
   if (message.action === "startLogging") {
@@ -186,3 +167,5 @@ browser.runtime.onMessage.addListener((message) => {
     stopPeriodicLogging();
   }
 });
+
+// No need for onSuspend listener for download, as data is pushed live.

@@ -2,12 +2,15 @@
   "manifest_version": 3,
   "name": "Tab Count Logger",
   "version": "1.0",
-  "description": "Logs the number of open tabs.",
+  "description": "Logs browser tab count periodically.",
   "permissions": [
     "tabs",
     "storage",
-    "alarms",
-    "downloads"
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost:5000/*",
+    "https://localhost:5000/*"
   ],
   "background": {
     "scripts": ["background.js"]
