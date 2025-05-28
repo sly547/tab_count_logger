@@ -68,13 +68,21 @@
             <option value="hours">Hour(s)</option>
             <option value="days">Day(s)</option>
         </select>
-        <button id="saveSettings">Save Settings</button>
+        <button id="saveIntervalSettings">Save Interval</button>
 
-        <h2>Server Configuration</h2>
-        <label for="serverUrl">HTTP Server URL (e.g., http://localhost:5000/tabcount):</label>
-        <input type="text" id="serverUrl" placeholder="Enter your server URL">
-        <button id="saveServerUrl">Save Server URL</button>
+        <h2>InfluxDB Configuration</h2>
+        <label for="influxdbUrl">InfluxDB URL (e.g., http://localhost:8086):</label>
+        <input type="text" id="influxdbUrl" placeholder="Enter InfluxDB URL">
 
+        <label for="influxdbOrg">InfluxDB Organization ID/Name:</label>
+        <input type="text" id="influxdbOrg" placeholder="Enter organization ID or name">
+
+        <label for="influxdbBucket">InfluxDB Bucket Name:</label>
+        <input type="text" id="influxdbBucket" placeholder="Enter bucket name">
+
+        <label for="influxdbToken">InfluxDB API Token:</label>
+        <input type="text" id="influxdbToken" placeholder="Enter API token">
+        <button id="saveInfluxdbSettings">Save InfluxDB Settings</button>
 
         <h2>Logging Control</h2>
         <button id="startLogging">Start Logging</button>

@@ -2,9 +2,14 @@ document.addEventListener('DOMContentLoaded', restoreOptions);
 
 const loggingIntervalValueInput = document.getElementById('loggingIntervalValue');
 const loggingIntervalUnitSelect = document.getElementById('loggingIntervalUnit');
-const serverUrlInput = document.getElementById('serverUrl');
-const saveSettingsButton = document.getElementById('saveSettings');
-const saveServerUrlButton = document.getElementById('saveServerUrl');
+const saveIntervalSettingsButton = document.getElementById('saveIntervalSettings'); // Renamed ID
+
+const influxdbUrlInput = document.getElementById('influxdbUrl');
+const influxdbOrgInput = document.getElementById('influxdbOrg');
+const influxdbBucketInput = document.getElementById('influxdbBucket');
+const influxdbTokenInput = document.getElementById('influxdbToken');
+const saveInfluxdbSettingsButton = document.getElementById('saveInfluxdbSettings'); // New ID
+
 const startLoggingButton = document.getElementById('startLogging');
 const stopLoggingButton = document.getElementById('stopLogging');
 const loggingStatusText = document.getElementById('loggingStatus');
@@ -19,12 +24,19 @@ async function restoreOptions() {
     'isLoggingActive',
     'lastTabCount',
     'timestamp',
-    'serverUrl' // Load the new serverUrl
+    'influxdbUrl',     // New InfluxDB settings
+    'influxdbOrg',
+    'influxdbBucket',
+    'influxdbToken'
   ]);
 
   loggingIntervalValueInput.value = items.loggingIntervalValue || 1;
   loggingIntervalUnitSelect.value = items.loggingIntervalUnit || 'minutes';
-  serverUrlInput.value = items.serverUrl || ''; // Populate the server URL input
+
+  influxdbUrlInput.value = items.influxdbUrl || '';
+  influxdbOrgInput.value = items.influxdbOrg || '';
+  influxdbBucketInput.value = items.influxdbBucket || '';
+  influxdbTokenInput.value = items.influxdbToken || '';
 
   updateStatusDisplay(items.isLoggingActive);
   updateLastTabCountDisplay(items.lastTabCount, items.timestamp);
@@ -39,18 +51,30 @@ async function saveIntervalSettings() {
   displayStatusMessage('Logging interval settings saved.', 'success');
 }
 
-// Save server URL
-async function saveServerUrlSettings() {
-  const url = serverUrlInput.value.trim();
-  // Basic URL validation
+// Save InfluxDB connection settings
+async function saveInfluxdbSettings() {
+  const url = influxdbUrlInput.value.trim();
+  const org = influxdbOrgInput.value.trim();
+  const bucket = influxdbBucketInput.value.trim();
+  const token = influxdbTokenInput.value.trim();
+
+  // Basic validation
   if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
-    displayStatusMessage('Please enter a valid HTTP/HTTPS URL for the server.', 'error');
+    displayStatusMessage('Please enter a valid HTTP/HTTPS URL for InfluxDB.', 'error');
     return;
   }
+  if (!org || !bucket || !token) {
+    displayStatusMessage('All InfluxDB fields (Org, Bucket, Token) are required.', 'error');
+    return;
+  }
+
   await browser.storage.local.set({
-    serverUrl: url
+    influxdbUrl: url,
+    influxdbOrg: org,
+    influxdbBucket: bucket,
+    influxdbToken: token
   });
-  displayStatusMessage('Server URL saved.', 'success');
+  displayStatusMessage('InfluxDB settings saved.', 'success');
 }
 
 
@@ -102,8 +126,8 @@ function displayStatusMessage(message, type) {
 }
 
 // Event Listeners
-saveSettingsButton.addEventListener('click', saveIntervalSettings);
-saveServerUrlButton.addEventListener('click', saveServerUrlSettings); // New button listener
+saveIntervalSettingsButton.addEventListener('click', saveIntervalSettings);
+saveInfluxdbSettingsButton.addEventListener('click', saveInfluxdbSettings); // New button listener
 startLoggingButton.addEventListener('click', startLogging);
 stopLoggingButton.addEventListener('click', stopLogging);
 

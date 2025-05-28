@@ -29,43 +29,59 @@ async function updateLastTabCountForDisplay() {
   }
 }
 
-// Function to send the current tab count to the configured HTTP server
-async function sendTabCountToServer() {
+// Function to send the current tab count directly to InfluxDB HTTP API
+async function sendTabCountToInfluxDB() {
   try {
-    const serverUrl = (await browser.storage.local.get('serverUrl')).serverUrl;
-    if (!serverUrl) {
-      console.error("Server URL not configured in extension options. Cannot send tab count.");
+    const dbConfig = await browser.storage.local.get([
+      'influxdbUrl',
+      'influxdbOrg',
+      'influxdbBucket',
+      'influxdbToken'
+    ]);
+
+    const { influxdbUrl, influxdbOrg, influxdbBucket, influxdbToken } = dbConfig;
+
+    if (!influxdbUrl || !influxdbOrg || !influxdbBucket || !influxdbToken) {
+      console.error("InfluxDB settings not fully configured in extension options. Cannot send tab count.");
       return;
     }
 
     const allTabs = await browser.tabs.query({});
     const tabCount = allTabs.length;
-    const timestamp = new Date().toISOString(); // ISO string is standard for server-side parsing
 
-    const payload = {
-      timestamp: timestamp,
-      tabCount: tabCount
-    };
+    // Get current time in nanoseconds since epoch (InfluxDB Line Protocol default)
+    const timestampNs = Date.now() * 1_000_000; // Convert milliseconds to nanoseconds
 
-    console.log(`Sending tab count to server: ${JSON.stringify(payload)} to ${serverUrl}`);
+    // Construct the InfluxDB Line Protocol payload
+    // Format: measurement,tag_key=tag_value field_key=field_value timestamp_ns
+    // IMPORANT FIX: Added 'i' suffix to explicitly make 'count' an integer
+    const lineProtocol = `tab_metrics,source=firefox_extension count=${tabCount}i ${timestampNs}`;
 
-    const response = await fetch(serverUrl, {
+    // Construct the InfluxDB write API URL
+    const writeUrl = `${influxdbUrl}/api/v2/write?org=${influxdbOrg}&bucket=${influxdbBucket}`;
+
+    console.log(`Sending data to InfluxDB: ${lineProtocol} to ${writeUrl}`);
+
+    const response = await fetch(writeUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Authorization': `Token ${influxdbToken}`,
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Accept': 'application/json' // Request JSON response for errors
       },
-      body: JSON.stringify(payload)
+      body: lineProtocol
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Server responded with status ${response.status}: ${errorText}`);
+      console.error(`InfluxDB responded with status ${response.status}: ${errorText}`);
+      throw new Error(`InfluxDB write failed: ${response.status} - ${errorText}`);
     }
 
-    console.log('Tab count sent successfully to server.');
+    console.log('Tab count sent successfully to InfluxDB.');
 
   } catch (error) {
-    console.error("Failed to send tab count to server:", error);
+    console.error("Failed to send tab count to InfluxDB:", error);
   }
 }
 
@@ -88,15 +104,15 @@ async function startPeriodicLogging() {
   console.log(`Periodic logging started. Interval: ${periodInMilliseconds / 1000 / 60} minutes.`);
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: true });
 
-  // Perform an immediate log when starting
-  await sendTabCountToServer();
+  // Perform an immediate send when starting
+  await sendTabCountToInfluxDB();
 
-  // Set the interval for subsequent logs
+  // Set the interval for subsequent sends
   loggingIntervalId = setInterval(async () => {
     // Check if logging is still active in storage before sending again
     const currentPrefs = await browser.storage.local.get('isLoggingActive');
     if (currentPrefs.isLoggingActive) {
-        await sendTabCountToServer();
+        await sendTabCountToInfluxDB();
     } else {
         // If it's somehow inactive, clear the interval
         clearInterval(loggingIntervalId);
@@ -117,7 +133,6 @@ async function stopPeriodicLogging() {
   await browser.storage.local.set({ isLoggingActive: false });
   console.log("Periodic logging stopped.");
   browser.runtime.sendMessage({ action: "updateLogStatus", isLoggingActive: false });
-  // No CSV download here anymore
 }
 
 // Initial setup when background script starts
@@ -138,7 +153,7 @@ async function stopPeriodicLogging() {
 })();
 
 // --- Event Listeners for Tab Changes (only update last tab count for display) ---
-// These are not directly tied to sending data to the server.
+// These are not directly tied to sending data to InfluxDB.
 browser.tabs.onCreated.addListener(() => {
   updateLastTabCountForDisplay();
 });
@@ -167,5 +182,3 @@ browser.runtime.onMessage.addListener((message) => {
     stopPeriodicLogging();
   }
 });
-
-// No need for onSuspend listener for download, as data is pushed live.
