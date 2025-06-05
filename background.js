@@ -1,4 +1,20 @@
-// TOP OF background.js
+/*
+ * Copyright 2025 Michael Büchler
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
+/*
+ * Written by Gemini 2.5 Flash because I totally cannot write JavaScript, let
+ * alone a whole browser plugin, and I wanted quick results - it kind of worked!
+ *
+ * The interval seems to set the minimum time between two submissions to
+ * InfluxDB. It doesn't seem to send anything when the tab count has not
+ * changed. It works well enough I would say..
+ */
+
 console.log("Background script loaded/reloaded at:", new Date().toLocaleString());
 
 let loggingIntervalId = null; // Store the ID for the setInterval
