@@ -8,10 +8,6 @@
     "storage",
     "alarms"
   ],
-  "host_permissions": [
-    "http://localhost:8086/*",
-    "https://localhost:8086/*"
-  ],
   "background": {
     "scripts": ["background.js"]
   },
