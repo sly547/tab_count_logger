@@ -2,9 +2,8 @@
   "manifest_version": 3,
   "name": "Tab Count Logger",
   "version": "1.0",
-  "description": "Logs browser tab count periodically.",
+  "description": "Sends the browser tab count to an InfluxDB instance",
   "permissions": [
-    "tabs",
     "storage",
     "alarms"
   ],
